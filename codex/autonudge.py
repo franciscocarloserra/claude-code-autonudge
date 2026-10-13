@@ -3,15 +3,20 @@
 # Set as Codex `notify`; on agent-turn-complete it forks a watcher that waits IDLE_S,
 # checks the rollout did not change, asks jev if the agent stopped short of the goal
 # (first user message), and if so sends NUDGE with `codex exec resume <thread>`.
+# Stops itself for the thread when jev judges the goal done or a budget runs out.
 import glob, json, os, subprocess, sys, time, urllib.request
 
 IDLE_S = 60
 TAIL_CHARS = 100_000  # ~30k tokens
 THRESHOLD = 0.7
-MAX_NUDGES = 3
+DONE_THRESHOLD = 0.8
+MAX_NUDGES = 3  # in a row; reset by any turn that is not a nudge
+BUDGET_NUDGES = 10  # total per thread
+BUDGET_MINUTES = 120  # since the first watch of the thread
 NUDGE = "Keep going toward the original goal. If you are blocked, say exactly what you need from me."
 QUESTION = ("The agent went idle. Did it stop before reaching the goal, while it could still make progress "
             "on its own (not waiting on a real decision or input from the user, and not done)?")
+DONE_Q = "Is the goal fully achieved, with nothing left for the agent to do?"
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 STATE_DIR = os.path.expanduser("~/.codex/autonudge")
 
@@ -41,28 +46,42 @@ def read_rollout(path):
 def jev(state):
     key = subprocess.run(["bash", "-c", 'source ~/.secrets.sh && printf %s "$TYPESAFE_API_KEY"'],
                          capture_output=True, text=True).stdout
-    body = {"state": state, "model": "jev-latest", "questions": {"stuck": {"type": "noul", "instructions": QUESTION}}}
+    body = {"state": state, "model": "jev-latest", "questions": {
+        "done": {"type": "noul", "instructions": DONE_Q}, "stuck": {"type": "noul", "instructions": QUESTION}}}
     req = urllib.request.Request(JEV_URL, json.dumps(body).encode(),
                                  {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(req, timeout=30))["answers"]["stuck"]["noul"]
+    a = json.load(urllib.request.urlopen(req, timeout=30))["answers"]
+    return a["done"]["noul"], a["stuck"]["noul"]
 
 
 def watch(thread, cwd, from_nudge):
     os.makedirs(STATE_DIR, exist_ok=True)
-    count_file = f"{STATE_DIR}/{thread}"
-    count = int(open(count_file).read()) if from_nudge and os.path.exists(count_file) else 0
-    open(count_file, "w").write(str(count))
+    state_file = f"{STATE_DIR}/{thread}.json"
+    st = json.load(open(state_file)) if os.path.exists(state_file) else {"row": 0, "total": 0, "since": time.time()}
+    save = lambda: json.dump(st, open(state_file, "w"))
+    if not from_nudge:
+        st["row"] = 0
+    save()
     path = (glob.glob(os.path.expanduser(f"~/.codex/sessions/*/*/*/rollout-*{thread}.jsonl")) or [None])[0]
-    if not path or count >= MAX_NUDGES:
+    if not path or st.get("off") or st["row"] >= MAX_NUDGES:
         return
+    if st["total"] >= BUDGET_NUDGES or time.time() - st["since"] > BUDGET_MINUTES * 60:
+        st["off"] = "budget"
+        return save()
     mtime = os.path.getmtime(path)
     time.sleep(IDLE_S)
     if os.path.getmtime(path) != mtime:
         return  # a new turn started
     goal, tail = read_rollout(path)
-    if jev(f"GOAL:\n{goal[:4000]}\n\nRECENT TRANSCRIPT:\n{tail}") < THRESHOLD:
+    done, stuck = jev(f"GOAL:\n{goal[:4000]}\n\nRECENT TRANSCRIPT:\n{tail}")
+    if done >= DONE_THRESHOLD:
+        st["off"] = "goal done"
+        return save()
+    if stuck < THRESHOLD:
         return
-    open(count_file, "w").write(str(count + 1))
+    st["row"] += 1
+    st["total"] += 1
+    save()
     subprocess.run(["codex", "exec", "resume", thread, NUDGE], cwd=cwd or None,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

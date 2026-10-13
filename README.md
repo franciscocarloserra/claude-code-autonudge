@@ -1,6 +1,8 @@
 # claude-code-autonudge
 
-Reference implementation of a Claude Code plugin. When the session sits idle for a minute, it asks [jev](https://typesafe.ai) whether the agent stopped short of its goal. If so, it sends a fixed message telling it to keep going.
+Reference implementation of a Claude Code plugin. When the session sits idle for a minute, it asks [jev](https://typesafe.ai) whether the agent stopped short of its goal. If so, it sends a fixed message telling it to keep going. It turns itself off when jev judges the goal done or a budget runs out.
+
+It sends your goal and the recent conversation to an external API (typesafe.ai), and each nudge spends a model turn of your quota.
 
 The goal is the first user message in the session transcript (`~/.claude/projects/<cwd>/<session>.jsonl`). jev gets the goal plus the tail of the conversation (~30k tokens) and answers yes/no.
 
@@ -15,7 +17,9 @@ Then `/autonudge` toggles it for the session.
 
 ## Config
 
-Constants at the top of `hooks/register.ts`: idle time, threshold, max nudges in a row (reset when you type), and the nudge text.
+Constants at the top of `hooks/register.ts`: idle time, thresholds, max nudges in a row (reset when you type), budgets (total nudges, minutes, context tokens) and the nudge text.
+
+To undo: `/autonudge` again turns it off; `/plugin uninstall autonudge@claude-code-autonudge` removes it.
 
 Needs `TYPESAFE_API_KEY` in `~/.secrets.sh`. Main session only, not subagents. Reads at most the first 2 MB of the transcript to find the goal.
 
@@ -29,4 +33,4 @@ In `~/.codex/config.toml`:
 notify = ["python3", "/path/to/codex/autonudge.py"]
 ```
 
-`notify` takes a single command; if you already use one, call this script from it with the same JSON argument. Same constants at the top of the script; nudge counts per thread in `~/.codex/autonudge/`.
+`notify` takes a single command; if you already use one, call this script from it with the same JSON argument. Same constants at the top of the script (no context-token budget). State per thread in `~/.codex/autonudge/<thread>.json`; once a thread is done or over budget it stays off until you move its file away. To undo, remove the `notify` line.
