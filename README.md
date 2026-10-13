@@ -18,3 +18,15 @@ Then `/autonudge` toggles it for the session.
 Constants at the top of `hooks/register.ts`: idle time, threshold, max nudges in a row (reset when you type), and the nudge text.
 
 Needs `TYPESAFE_API_KEY` in `~/.secrets.sh`. Main session only, not subagents. Reads at most the first 2 MB of the transcript to find the goal.
+
+## Codex
+
+`codex/autonudge.py` does the same for Codex CLI. Codex has no way to inject a message into a running TUI, so it hooks `notify` (runs after each turn) and sends the nudge with `codex exec resume <thread>`, which runs headless: the turn lands in the session's transcript, but an open TUI won't show it live.
+
+In `~/.codex/config.toml`:
+
+```
+notify = ["python3", "/path/to/codex/autonudge.py"]
+```
+
+`notify` takes a single command; if you already use one, call this script from it with the same JSON argument. Same constants at the top of the script; nudge counts per thread in `~/.codex/autonudge/`.
