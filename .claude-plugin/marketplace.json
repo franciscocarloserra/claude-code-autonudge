@@ -1,0 +1,7 @@
+{
+  "name": "claude-code-autonudge",
+  "owner": { "name": "Francisco Carlos Serra" },
+  "plugins": [
+    { "name": "autonudge", "source": "./", "description": "/autonudge: nudge an idle session that stopped short of its goal (jev judges)" }
+  ]
+}

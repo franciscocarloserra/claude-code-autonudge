@@ -1,0 +1,1 @@
+{ "name": "autonudge", "version": "0.1.0", "description": "/autonudge: when the session sits idle, jev judges if it stopped short of the goal and sends a fixed nudge" }
